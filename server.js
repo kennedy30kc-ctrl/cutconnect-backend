@@ -406,7 +406,18 @@ app.get('/api/admin/stats', adminAuth, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
+// CITAS POR BARBERÍA (para el dueño)
+app.get('/api/citas/barberia/:barberiaId', async (req, res) => {
+  try {
+    const citas = await sb('citas', {
+      filters: `&barberia_id=eq.${req.params.barberiaId}`,
+      select: '*,barbero:barberos(*),servicio:servicios(*),cliente:usuarios(nombre,email,telefono)'
+    });
+    res.json({ success: true, data: citas });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.listen(3001, () => {
