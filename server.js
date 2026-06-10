@@ -14,21 +14,16 @@ const headers = {
   'Authorization': `Bearer ${SUPABASE_KEY}`
 };
 
-// Helper para consultas a Supabase
 async function sb(tabla, options = {}) {
   const { method = 'GET', filters = '', body = null, select = '*' } = options;
   let url = `${SUPABASE_URL}/rest/v1/${tabla}?select=${select}${filters}`;
   const config = { method, headers: { ...headers } };
   if (body) {
     config.body = JSON.stringify(body);
-    config.headers['Content-Type'] = 'application/json';
-    config.headers['Prefer'] = method === 'POST' ? 'return=representation' : 'return=representation';
+    config.headers['Prefer'] = 'return=representation';
   }
   const res = await fetch(url, config);
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err);
-  }
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
@@ -68,12 +63,21 @@ function calcularDistancia(lat1, lon1, lat2, lon2) {
 // ============================================================
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, nombre, telefono, rol, negocio_nombre, ciudad, pais, estado, municipio, negocio_telefono, negocio_logo, negocio_descripcion, direccion, latitud, longitud } = req.body;
+    const {
+      email, password, nombre, telefono, rol, pais,
+      negocio_nombre, ciudad, estado, municipio, tipo_negocio,
+      negocio_telefono, negocio_logo, negocio_descripcion,
+      direccion, latitud, longitud
+    } = req.body;
 
-    if (!email || !password || !rol) return res.status(400).json({ success: false, error: 'Email, contraseña y rol requeridos' });
+    if (!email || !password || !rol) {
+      return res.status(400).json({ success: false, error: 'Email, contraseña y rol requeridos' });
+    }
 
     const existing = await sb('usuarios', { filters: `&email=eq.${encodeURIComponent(email)}` });
-    if (existing.length > 0) return res.status(400).json({ success: false, error: 'El email ya está registrado' });
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'El email ya está registrado' });
+    }
 
     if (rol === 'dueño' && (!negocio_nombre || !ciudad || !negocio_telefono || !direccion || !latitud || !longitud)) {
       return res.status(400).json({ success: false, error: 'Completa todos los datos del negocio' });
@@ -83,7 +87,7 @@ app.post('/api/auth/register', async (req, res) => {
       email, password,
       nombre: nombre || email.split('@')[0],
       telefono: telefono || '',
-      rol,
+      rol, pais: pais || 'Colombia',
       estado_verificacion: rol === 'dueño' ? 'pendiente' : 'aprobado'
     });
 
@@ -91,10 +95,16 @@ app.post('/api/auth/register', async (req, res) => {
       await sbInsert('barberias', {
         dueno_id: usuario.id,
         nombre: negocio_nombre,
-        ciudad, pais: pais || '', estado: estado || '',
-        municipio: municipio || '', telefono: negocio_telefono,
-        logo: negocio_logo || null, descripcion: negocio_descripcion || '',
-        direccion, latitud: parseFloat(latitud), longitud: parseFloat(longitud),
+        tipo_negocio: tipo_negocio || 'barberia',
+        ciudad, pais: pais || 'Colombia',
+        estado: estado || '',
+        municipio: municipio || '',
+        telefono: negocio_telefono,
+        logo: negocio_logo || null,
+        descripcion: negocio_descripcion || '',
+        direccion,
+        latitud: parseFloat(latitud),
+        longitud: parseFloat(longitud),
         estado_verificacion: 'pendiente'
       });
     }
@@ -116,10 +126,17 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ success: false, error: 'Email y contraseña requeridos' });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email y contraseña requeridos' });
+    }
 
-    const usuarios = await sb('usuarios', { filters: `&email=eq.${encodeURIComponent(email)}&password=eq.${encodeURIComponent(password)}` });
-    if (usuarios.length === 0) return res.status(401).json({ success: false, error: 'Email o contraseña incorrectos' });
+    const usuarios = await sb('usuarios', {
+      filters: `&email=eq.${encodeURIComponent(email)}&password=eq.${encodeURIComponent(password)}`
+    });
+
+    if (usuarios.length === 0) {
+      return res.status(401).json({ success: false, error: 'Email o contraseña incorrectos' });
+    }
 
     const usuario = usuarios[0];
 
@@ -131,12 +148,18 @@ app.post('/api/auth/login', async (req, res) => {
         usuario.estado = barberias[0].estado;
         usuario.negocio_telefono = barberias[0].telefono;
         usuario.negocio_logo = barberias[0].logo;
+        usuario.tipo_negocio = barberias[0].tipo_negocio;
         usuario.fecha_trial_inicio = barberias[0].fecha_trial_inicio;
         usuario.estado_verificacion = barberias[0].estado_verificacion;
+        usuario.barberia_id = barberias[0].id;
       }
     }
 
-    res.json({ success: true, user: { ...usuario, password: undefined }, token: 'token_' + usuario.id });
+    res.json({
+      success: true,
+      user: { ...usuario, password: undefined },
+      token: 'token_' + usuario.id
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -149,7 +172,9 @@ app.post('/api/auth/recuperar-contrasena', async (req, res) => {
   try {
     const { email, nueva_contrasena } = req.body;
     const usuarios = await sb('usuarios', { filters: `&email=eq.${encodeURIComponent(email)}` });
-    if (usuarios.length === 0) return res.status(404).json({ success: false, error: 'Email no registrado' });
+    if (usuarios.length === 0) {
+      return res.status(404).json({ success: false, error: 'Email no registrado' });
+    }
     await sbUpdate('usuarios', `id=eq.${usuarios[0].id}`, { password: nueva_contrasena });
     res.json({ success: true, message: 'Contraseña actualizada' });
   } catch (err) {
@@ -162,19 +187,38 @@ app.post('/api/auth/recuperar-contrasena', async (req, res) => {
 // ============================================================
 app.get('/api/barberias', async (req, res) => {
   try {
-    const { lat, lon, ciudad } = req.query;
+    const { lat, lon, ciudad, tipo } = req.query;
     let filters = `&estado_verificacion=in.(activo,trial)`;
     if (ciudad) filters += `&or=(ciudad.ilike.*${ciudad}*,municipio.ilike.*${ciudad}*)`;
+    if (tipo) filters += `&tipo_negocio=eq.${tipo}`;
 
     let barberias = await sb('barberias', { filters });
 
     if (lat && lon) {
       barberias = barberias
-        .map(b => ({ ...b, distancia: calcularDistancia(parseFloat(lat), parseFloat(lon), b.latitud, b.longitud) }))
+        .map(b => ({
+          ...b,
+          distancia: calcularDistancia(parseFloat(lat), parseFloat(lon), b.latitud, b.longitud)
+        }))
         .sort((a, b) => a.distancia - b.distancia);
     }
 
     res.json({ success: true, data: barberias });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// BARBERÍAS - ACTUALIZAR (dueño edita su negocio)
+// ============================================================
+app.put('/api/barberias/:id', async (req, res) => {
+  try {
+    const { nombre, descripcion, telefono, logo, direccion, tipo_negocio } = req.body;
+    await sbUpdate('barberias', `id=eq.${req.params.id}`, {
+      nombre, descripcion, telefono, logo, direccion, tipo_negocio
+    });
+    res.json({ success: true, message: 'Negocio actualizado' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -197,7 +241,9 @@ app.get('/api/servicios', async (req, res) => {
 // ============================================================
 app.get('/api/barberos/:barberiaId', async (req, res) => {
   try {
-    const barberos = await sb('barberos', { filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true` });
+    const barberos = await sb('barberos', {
+      filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true`
+    });
     res.json({ success: true, data: barberos });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -210,8 +256,14 @@ app.get('/api/barberos/:barberiaId', async (req, res) => {
 app.post('/api/barberos', async (req, res) => {
   try {
     const { barberia_id, nombre, foto, especialidad, horario } = req.body;
-    if (!barberia_id || !nombre) return res.status(400).json({ success: false, error: 'Barbería y nombre requeridos' });
-    const barbero = await sbInsert('barberos', { barberia_id, nombre, foto: foto || null, especialidad: especialidad || 'Cortes generales', horario: horario || null });
+    if (!barberia_id || !nombre) {
+      return res.status(400).json({ success: false, error: 'Barbería y nombre requeridos' });
+    }
+    const barbero = await sbInsert('barberos', {
+      barberia_id, nombre, foto: foto || null,
+      especialidad: especialidad || 'Cortes generales',
+      horario: horario || null
+    });
     res.status(201).json({ success: true, data: barbero });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -224,7 +276,9 @@ app.post('/api/barberos', async (req, res) => {
 app.put('/api/barberos/:id', async (req, res) => {
   try {
     const { nombre, foto, especialidad, horario, activo } = req.body;
-    const updated = await sbUpdate('barberos', `id=eq.${req.params.id}`, { nombre, foto, especialidad, horario, activo });
+    const updated = await sbUpdate('barberos', `id=eq.${req.params.id}`, {
+      nombre, foto, especialidad, horario, activo
+    });
     res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -250,7 +304,9 @@ app.get('/api/disponibilidad/:barberoId/:fecha', async (req, res) => {
   try {
     const { barberoId, fecha } = req.params;
     const barberos = await sb('barberos', { filters: `&id=eq.${barberoId}` });
-    if (barberos.length === 0) return res.status(404).json({ success: false, error: 'Barbero no encontrado' });
+    if (barberos.length === 0) {
+      return res.status(404).json({ success: false, error: 'Barbero no encontrado' });
+    }
 
     const barbero = barberos[0];
     const dias = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado'];
@@ -258,7 +314,9 @@ app.get('/api/disponibilidad/:barberoId/:fecha', async (req, res) => {
     const diaSemana = dias[fechaObj.getDay()];
     const horarioDia = barbero.horario[diaSemana];
 
-    if (!horarioDia || !horarioDia.activo) return res.json({ success: true, data: [], mensaje: 'No trabaja ese día' });
+    if (!horarioDia || !horarioDia.activo) {
+      return res.json({ success: true, data: [], mensaje: 'No trabaja ese día' });
+    }
 
     const slots = [];
     const [hI, mI] = horarioDia.inicio.split(':').map(Number);
@@ -272,8 +330,11 @@ app.get('/api/disponibilidad/:barberoId/:fecha', async (req, res) => {
       actual += 30;
     }
 
-    const citasOcupadas = await sb('citas', { filters: `&barbero_id=eq.${barberoId}&fecha=eq.${fecha}&estado=neq.cancelada`, select: 'hora' });
-    const horasOcupadas = citasOcupadas.map((c) => c.hora);
+    const citasOcupadas = await sb('citas', {
+      filters: `&barbero_id=eq.${barberoId}&fecha=eq.${fecha}&estado=neq.cancelada`,
+      select: 'hora'
+    });
+    const horasOcupadas = citasOcupadas.map(c => c.hora);
     const disponibles = slots.filter(s => !horasOcupadas.includes(s));
 
     res.json({ success: true, data: disponibles });
@@ -288,14 +349,24 @@ app.get('/api/disponibilidad/:barberoId/:fecha', async (req, res) => {
 app.post('/api/citas/agendar', async (req, res) => {
   try {
     const { barberia_id, barbero_id, servicio_id, fecha, hora, usuario_id } = req.body;
-    if (!barberia_id || !servicio_id || !fecha || !hora) return res.status(400).json({ success: false, error: 'Todos los campos son requeridos' });
-
-    if (barbero_id) {
-      const ocupada = await sb('citas', { filters: `&barbero_id=eq.${barbero_id}&fecha=eq.${fecha}&hora=eq.${hora}&estado=neq.cancelada` });
-      if (ocupada.length > 0) return res.status(400).json({ success: false, error: 'Esa hora ya está ocupada' });
+    if (!barberia_id || !servicio_id || !fecha || !hora) {
+      return res.status(400).json({ success: false, error: 'Todos los campos son requeridos' });
     }
 
-    const cita = await sbInsert('citas', { usuario_id, barberia_id, barbero_id: barbero_id || null, servicio_id, fecha, hora, estado: 'agendada' });
+    if (barbero_id) {
+      const ocupada = await sb('citas', {
+        filters: `&barbero_id=eq.${barbero_id}&fecha=eq.${fecha}&hora=eq.${hora}&estado=neq.cancelada`
+      });
+      if (ocupada.length > 0) {
+        return res.status(400).json({ success: false, error: 'Esa hora ya está ocupada' });
+      }
+    }
+
+    const cita = await sbInsert('citas', {
+      usuario_id, barberia_id,
+      barbero_id: barbero_id || null,
+      servicio_id, fecha, hora, estado: 'agendada'
+    });
     res.status(201).json({ success: true, message: 'Cita agendada', cita });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -303,7 +374,7 @@ app.post('/api/citas/agendar', async (req, res) => {
 });
 
 // ============================================================
-// CITAS - GET POR USUARIO
+// CITAS - GET POR USUARIO (cliente)
 // ============================================================
 app.get('/api/citas/usuario/:usuarioId', async (req, res) => {
   try {
@@ -318,12 +389,62 @@ app.get('/api/citas/usuario/:usuarioId', async (req, res) => {
 });
 
 // ============================================================
+// CITAS - GET POR BARBERÍA (dueño)
+// ============================================================
+app.get('/api/citas/barberia/:barberiaId', async (req, res) => {
+  try {
+    const citas = await sb('citas', {
+      filters: `&barberia_id=eq.${req.params.barberiaId}`,
+      select: '*,barbero:barberos(*),servicio:servicios(*),cliente:usuarios(nombre,email,telefono)'
+    });
+    res.json({ success: true, data: citas });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// STATS BARBEROS (ranking para el dueño)
+// ============================================================
+app.get('/api/stats/barberos/:barberiaId', async (req, res) => {
+  try {
+    const citas = await sb('citas', {
+      filters: `&barberia_id=eq.${req.params.barberiaId}`,
+      select: 'barbero_id,barbero:barberos(nombre,foto)'
+    });
+
+    const ranking = {};
+    citas.forEach(c => {
+      if (c.barbero_id) {
+        if (!ranking[c.barbero_id]) {
+          ranking[c.barbero_id] = {
+            barbero_id: c.barbero_id,
+            nombre: c.barbero?.nombre || 'Sin nombre',
+            foto: c.barbero?.foto || null,
+            total_citas: 0
+          };
+        }
+        ranking[c.barbero_id].total_citas++;
+      }
+    });
+
+    const result = Object.values(ranking).sort((a, b) => b.total_citas - a.total_citas);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
 // ADMIN
 // ============================================================
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
-  if (password === ADMIN_PASSWORD) res.json({ success: true, token: 'admin_token_cutconnect' });
-  else res.status(401).json({ success: false, error: 'Contraseña incorrecta' });
+  if (password === ADMIN_PASSWORD) {
+    res.json({ success: true, token: 'admin_token_cutconnect' });
+  } else {
+    res.status(401).json({ success: false, error: 'Contraseña incorrecta' });
+  }
 });
 
 function adminAuth(req, res, next) {
@@ -349,8 +470,14 @@ app.get('/api/admin/negocios', adminAuth, async (req, res) => {
 
 app.post('/api/admin/aprobar/:id', adminAuth, async (req, res) => {
   try {
-    await sbUpdate('barberias', `id=eq.${req.params.id}`, { estado_verificacion: 'trial', fecha_trial_inicio: new Date().toISOString() });
-    await sbUpdate('usuarios', `id=eq.${req.params.id}`, { estado_verificacion: 'trial', fecha_trial_inicio: new Date().toISOString() });
+    await sbUpdate('barberias', `id=eq.${req.params.id}`, {
+      estado_verificacion: 'trial',
+      fecha_trial_inicio: new Date().toISOString()
+    });
+    await sbUpdate('usuarios', `id=eq.${req.params.id}`, {
+      estado_verificacion: 'trial',
+      fecha_trial_inicio: new Date().toISOString()
+    });
     res.json({ success: true, message: 'Negocio aprobado. Trial de 14 días iniciado.' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -389,35 +516,28 @@ app.post('/api/admin/suspender/:id', adminAuth, async (req, res) => {
 
 app.get('/api/admin/stats', adminAuth, async (req, res) => {
   try {
-    const barberias = await sb('barberias', { select: 'estado_verificacion' });
+    const barberias = await sb('barberias', { select: 'estado_verificacion,tipo_negocio' });
     const clientes = await sb('usuarios', { filters: `&rol=eq.cliente`, select: 'id' });
     const citas = await sb('citas', { select: 'id' });
-    res.json({ success: true, data: {
-      total: barberias.length,
-      pendientes: barberias.filter(b => b.estado_verificacion === 'pendiente').length,
-      trial: barberias.filter(b => b.estado_verificacion === 'trial').length,
-      activos: barberias.filter(b => b.estado_verificacion === 'activo').length,
-      suspendidos: barberias.filter(b => b.estado_verificacion === 'suspendido').length,
-      rechazados: barberias.filter(b => b.estado_verificacion === 'rechazado').length,
-      total_citas: citas.length,
-      total_clientes: clientes.length
-    }});
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-// CITAS POR BARBERÍA (para el dueño)
-app.get('/api/citas/barberia/:barberiaId', async (req, res) => {
-  try {
-    const citas = await sb('citas', {
-      filters: `&barberia_id=eq.${req.params.barberiaId}`,
-      select: '*,barbero:barberos(*),servicio:servicios(*),cliente:usuarios(nombre,email,telefono)'
+    res.json({
+      success: true, data: {
+        total: barberias.length,
+        pendientes: barberias.filter(b => b.estado_verificacion === 'pendiente').length,
+        trial: barberias.filter(b => b.estado_verificacion === 'trial').length,
+        activos: barberias.filter(b => b.estado_verificacion === 'activo').length,
+        suspendidos: barberias.filter(b => b.estado_verificacion === 'suspendido').length,
+        rechazados: barberias.filter(b => b.estado_verificacion === 'rechazado').length,
+        barberias: barberias.filter(b => b.tipo_negocio === 'barberia').length,
+        peluquerias: barberias.filter(b => b.tipo_negocio === 'peluqueria').length,
+        total_citas: citas.length,
+        total_clientes: clientes.length
+      }
     });
-    res.json({ success: true, data: citas });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.listen(3001, () => {
