@@ -411,10 +411,10 @@ app.get('/api/barbero/perfil/:usuarioId', async (req, res) => {
 
 app.put('/api/barbero/perfil/:barberoId', async (req, res) => {
   try {
-    const { descripcion, especialidad, whatsapp, horario } = req.body;
-    await sbUpdate('barberos', `id=eq.${req.params.barberoId}`, {
-      descripcion, especialidad, whatsapp, horario
-    });
+  const { descripcion, especialidad, whatsapp, horario, apikey_whatsapp } = req.body;
+   await sbUpdate('barberos', `id=eq.${req.params.barberoId}`, {
+  descripcion, especialidad, whatsapp, horario, apikey_whatsapp
+});
     res.json({ success: true, message: 'Perfil actualizado' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
