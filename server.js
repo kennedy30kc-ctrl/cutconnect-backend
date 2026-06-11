@@ -592,7 +592,75 @@ app.get('/api/admin/stats', adminAuth, async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+// ============================================================
+// PAGOS - STRIPE
+// ============================================================
+const Stripe = require('stripe');
+const stripe = Stripe('sk_test_51TeJl8DLvPVfjrc8SYstvymcTDlGThR70FNr7rxomP6ObyGwDHr4Ctgx4y9VVXYMrjDkWsTEKnVhUkvBz8VX7FX600R84hV1T7');
 
+app.post('/api/pagos/stripe/crear', async (req, res) => {
+  try {
+    const { barberia_id, email } = req.body;
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: 'CutConnect — Suscripción mensual',
+            description: 'Acceso completo a la plataforma por 30 días'
+          },
+          unit_amount: 1200
+        },
+        quantity: 1
+      }],
+      mode: 'payment',
+      success_url: `https://cutconnect-web.vercel.app?pago=exitoso&barberia_id=${barberia_id}`,
+      cancel_url: `https://cutconnect-web.vercel.app?pago=cancelado`,
+      customer_email: email
+    });
+    res.json({ success: true, url: session.url, session_id: session.id });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/pagos/stripe/verificar', async (req, res) => {
+  try {
+    const { session_id, barberia_id } = req.body;
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    if (session.payment_status === 'paid') {
+      const fechaVencimiento = new Date();
+      fechaVencimiento.setDate(fechaVencimiento.getDate() + 30);
+      await sbUpdate('barberias', `id=eq.${barberia_id}`, {
+        estado_verificacion: 'activo',
+        fecha_vencimiento: fechaVencimiento.toISOString()
+      });
+      await sbUpdate('usuarios', `id=eq.${barberia_id}`, {
+        estado_verificacion: 'activo'
+      });
+      res.json({ success: true, message: 'Pago verificado. Cuenta activada.' });
+    } else {
+      res.json({ success: false, message: 'Pago pendiente o fallido' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/pagos/binance', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      pay_id: '176779028',
+      nombre: 'Kennedy Contreras',
+      qr_url: 'https://mypcsegsvarcwyigzodc.supabase.co/storage/v1/object/public/imagenes-cutconnect/QR%20BINANCE.jpeg',
+      monto: 12,
+      moneda: 'USDT',
+      instrucciones: 'Escanea el QR con tu app de Binance o envía exactamente $12 USDT al Pay ID 176779028. Luego envía el comprobante por WhatsApp para activar tu cuenta.'
+    }
+  });
+});
 app.listen(3001, () => {
   console.log('\n🚀 CutConnect Backend corriendo en http://localhost:3001');
   console.log('🗄️  Conectado a Supabase ✅\n');
