@@ -411,13 +411,26 @@ app.get('/api/barbero/perfil/:usuarioId', async (req, res) => {
 
 app.put('/api/barbero/perfil/:barberoId', async (req, res) => {
   try {
-    const { descripcion } = req.body;
-    await sbUpdate('barberos', `id=eq.${req.params.barberoId}`, { descripcion });
+    const { descripcion, especialidad, whatsapp, horario } = req.body;
+    await sbUpdate('barberos', `id=eq.${req.params.barberoId}`, {
+      descripcion, especialidad, whatsapp, horario
+    });
     res.json({ success: true, message: 'Perfil actualizado' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Notificación WhatsApp via CallMeBot
+async function enviarWhatsApp(telefono, mensaje) {
+  try {
+    const numero = telefono.replace(/\D/g, '');
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${numero}&text=${encodeURIComponent(mensaje)}&apikey=xxxxxxxx`;
+    await fetch(url);
+  } catch (err) {
+    console.log('Error WhatsApp:', err.message);
+  }
+}
 
 // ============================================================
 // DISPONIBILIDAD
@@ -464,7 +477,16 @@ app.post('/api/citas/agendar', async (req, res) => {
       if (ocupada.length > 0) return res.status(400).json({ success: false, error: 'Esa hora ya está ocupada' });
     }
     const cita = await sbInsert('citas', { usuario_id, barberia_id, barbero_id: barbero_id || null, servicio_id, fecha, hora, estado: 'agendada' });
-    res.status(201).json({ success: true, message: 'Cita agendada', cita });
+   // Notificar al barbero por WhatsApp
+    if (barbero_id) {
+      try {
+        const barberos = await sb('barberos', { filters: `&id=eq.${barbero_id}` });
+        if (barberos.length > 0 && barberos[0].whatsapp && barberos[0].apikey_whatsapp) {
+          const msg = `💈 CutConnect: Nueva cita agendada!\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\nServicio: ${servicio_id}`;
+          await enviarWhatsApp(barberos[0].whatsapp, msg);
+        }
+      } catch (e) { console.log('Error notificando barbero:', e.message); }
+    } res.status(201).json({ success: true, message: 'Cita agendada', cita });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -596,8 +618,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // PAGOS - STRIPE
 // ============================================================
 const Stripe = require('stripe');
-const stripe = Stripe('sk_test_51TeJl8DLvPVfjrc8SYstvymcTDlGThR70FNr7rxomP6ObyGwDHr4Ctgx4y9VVXYMrjDkWsTEKnVhUkvBz8VX7FX600R84hV1T7');
-
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 app.post('/api/pagos/stripe/crear', async (req, res) => {
   try {
     const { barberia_id, email } = req.body;
