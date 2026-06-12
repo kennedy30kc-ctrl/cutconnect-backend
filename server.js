@@ -612,7 +612,29 @@ app.get('/api/admin/stats', adminAuth, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
+// ============================================================
+// FIDELIZACIÓN
+// ============================================================
+app.get('/api/fidelizacion/:barberiaId/:usuarioId', async (req, res) => {
+  try {
+    const { barberiaId, usuarioId } = req.params;
+    const [barberia, citas] = await Promise.all([
+      sb('barberias', { filters: `&id=eq.${barberiaId}`, select: 'fidelizacion_citas,fidelizacion_beneficio' }),
+      sb('citas', { filters: `&barberia_id=eq.${barberiaId}&usuario_id=eq.${usuarioId}&estado=neq.cancelada`, select: 'id' })
+    ]);
+    if (barberia.length === 0) return res.status(404).json({ success: false });
+    res.json({
+      success: true,
+      data: {
+        citas_actuales: citas.length,
+        citas_requeridas: barberia[0].fidelizacion_citas || 10,
+        beneficio: barberia[0].fidelizacion_beneficio || 'Premio especial'
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // ============================================================
 // PAGOS - STRIPE
