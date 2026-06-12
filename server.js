@@ -650,10 +650,10 @@ app.post('/api/pagos/stripe/crear', async (req, res) => {
         price_data: {
           currency: 'usd',
           product_data: {
-            name: 'CutConnect — Suscripción mensual',
-            description: 'Acceso completo a la plataforma por 30 días'
+           name: 'CutConnect Pro',
+description: 'Dashboard avanzado y estadísticas por 30 días'
           },
-          unit_amount: 1200
+          unit_amount: 399
         },
         quantity: 1
       }],
