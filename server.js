@@ -315,25 +315,40 @@ app.post('/api/auth/recuperar-contrasena', async (req, res) => {
 // ============================================================
 app.get('/api/barberias', async (req, res) => {
   try {
-    const { lat, lon, ciudad, tipo } = req.query;
+    const { lat, lon, ciudad, tipo, categoria } = req.query;
     let filters = `&estado_verificacion=in.(activo,trial)`;
     if (ciudad) filters += `&or=(ciudad.ilike.*${ciudad}*,municipio.ilike.*${ciudad}*)`;
     if (tipo) filters += `&tipo_negocio=eq.${tipo}`;
-    let barberias = await sb('barberias', { filters });
-    if (lat && lon) {
-      barberias = barberias.map(b => ({ ...b, distancia: calcularDistancia(parseFloat(lat), parseFloat(lon), b.latitud, b.longitud) })).sort((a, b) => a.distancia - b.distancia);
-    }
-    res.json({ success: true, data: barberias });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
-app.put('/api/barberias/:id', async (req, res) => {
-  try {
-    const { nombre, descripcion, telefono, logo, direccion, tipo_negocio } = req.body;
-    await sbUpdate('barberias', `id=eq.${req.params.id}`, { nombre, descripcion, telefono, logo, direccion, tipo_negocio });
-    res.json({ success: true, message: 'Negocio actualizado' });
+    let barberias = await sb('barberias', { filters });
+
+    // Filtrar por categoría de servicio
+    if (categoria && categoria !== 'todos') {
+      const servicios = await sb('servicios', { 
+        filters: `&categoria=eq.${categoria}`, 
+        select: 'id' 
+      });
+      const servicioIds = servicios.map(s => s.id);
+      
+      if (servicioIds.length > 0) {
+        const citas = await sb('citas', { 
+          filters: `&servicio_id=in.(${servicioIds.join(',')})`,
+          select: 'barberia_id'
+        });
+        const barberiaIds = [...new Set(citas.map(c => c.barberia_id))];
+        if (barberiaIds.length > 0) {
+          barberias = barberias.filter(b => barberiaIds.includes(b.id));
+        }
+      }
+    }
+
+    if (lat && lon) {
+      barberias = barberias
+        .map(b => ({ ...b, distancia: calcularDistancia(parseFloat(lat), parseFloat(lon), b.latitud, b.longitud) }))
+        .sort((a, b) => a.distancia - b.distancia);
+    }
+
+    res.json({ success: true, data: barberias });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
