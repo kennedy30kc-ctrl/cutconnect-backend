@@ -704,7 +704,84 @@ app.put('/api/admin/anuncios/:id', adminAuth, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+// ============================================================
+// PRECIOS POR BARBERÍA
+// ============================================================
+app.get('/api/precios/:barberiaId', async (req, res) => {
+  try {
+    const precios = await sb('precios_barberia', {
+      filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true`,
+      select: '*,servicio:servicios(nombre,emoji)'
+    });
+    res.json({ success: true, data: precios });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
+app.post('/api/precios/:barberiaId', async (req, res) => {
+  try {
+    const { servicio_id, precio } = req.body;
+    const existing = await sb('precios_barberia', {
+      filters: `&barberia_id=eq.${req.params.barberiaId}&servicio_id=eq.${servicio_id}`
+    });
+    if (existing.length > 0) {
+      await sbUpdate('precios_barberia', `id=eq.${existing[0].id}`, { precio, activo: true });
+    } else {
+      await sbInsert('precios_barberia', { barberia_id: req.params.barberiaId, servicio_id, precio });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
+  try {
+    const hoy = new Date().toISOString().split('T')[0];
+    const inicioSemana = new Date(); inicioSemana.setDate(inicioSemana.getDate() - inicioSemana.getDay());
+    const inicioMes = new Date(); inicioMes.setDate(1);
+
+    const [citas, precios, servicios] = await Promise.all([
+      sb('citas', { filters: `&barberia_id=eq.${req.params.barberiaId}&estado=neq.cancelada`, select: 'servicio_id,fecha,barbero_id' }),
+      sb('precios_barberia', { filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true` }),
+      sb('servicios', { select: 'id,nombre,precio' })
+    ]);
+
+    const getPrecio = (servicioId: any) => {
+      const custom = precios.find((p: any) => p.servicio_id === servicioId);
+      if (custom) return custom.precio;
+      const base = servicios.find((s: any) => s.id === servicioId);
+      return base?.precio || 0;
+    };
+
+    const ingresosHoy = citas.filter((c: any) => c.fecha === hoy).reduce((a: number, c: any) => a + getPrecio(c.servicio_id), 0);
+    const ingresosSemana = citas.filter((c: any) => new Date(c.fecha) >= inicioSemana).reduce((a: number, c: any) => a + getPrecio(c.servicio_id), 0);
+    const ingresosMes = citas.filter((c: any) => new Date(c.fecha) >= inicioMes).reduce((a: number, c: any) => a + getPrecio(c.servicio_id), 0);
+
+    const serviciosCount: any = {};
+    citas.forEach((c: any) => { serviciosCount[c.servicio_id] = (serviciosCount[c.servicio_id] || 0) + 1; });
+    const servicioMasVendidoId = Object.keys(serviciosCount).sort((a, b) => serviciosCount[b] - serviciosCount[a])[0];
+    const servicioMasVendido = servicios.find((s: any) => s.id == servicioMasVendidoId);
+
+    const barberosCount: any = {};
+    citas.forEach((c: any) => { if(c.barbero_id) barberosCount[c.barbero_id] = (barberosCount[c.barbero_id] || 0) + 1; });
+
+    res.json({
+      success: true,
+      data: {
+        ingresos_hoy: ingresosHoy,
+        ingresos_semana: ingresosSemana,
+        ingresos_mes: ingresosMes,
+        citas_mes: citas.filter((c: any) => new Date(c.fecha) >= inicioMes).length,
+        servicio_mas_vendido: servicioMasVendido?.nombre || '—',
+        servicio_mas_vendido_count: servicioMasVendidoId ? serviciosCount[servicioMasVendidoId] : 0,
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // ============================================================
