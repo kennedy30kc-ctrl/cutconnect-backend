@@ -103,6 +103,18 @@ function calcularDistancia(lat1, lon1, lat2, lon2) {
 // ============================================================
 app.post('/api/upload/logo/:barberiaId', upload.single('imagen'), async (req, res) => {
   try {
+    app.post('/api/upload/anuncio/:id', upload.single('imagen'), async (req, res) => {
+  try {
+    const ext = req.file.originalname.split('.').pop()
+    const fileName = `anuncios/anuncio_${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('imagenes-cutconnect').upload(fileName, req.file.buffer, { contentType: req.file.mimetype, upsert: true })
+    if (error) return res.status(500).json({ success: false, error: error.message })
+    const { data } = supabase.storage.from('imagenes-cutconnect').getPublicUrl(fileName)
+    res.json({ success: true, url: data.publicUrl })
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
     if (!req.file) return res.status(400).json({ success: false, error: 'No se recibió imagen' });
     const ext = req.file.mimetype.split('/')[1];
     const nombre = `logo_${req.params.barberiaId}_${Date.now()}.${ext}`;
