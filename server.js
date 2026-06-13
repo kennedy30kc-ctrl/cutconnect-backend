@@ -10,7 +10,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 
 const SUPABASE_URL = 'https://mypcsegsvarcwyigzodc.supabase.co';
 const SUPABASE_KEY = 'sb_secret_xs3NNf9uRMfySfM2DIodsA_ulpWE2OS';
-const ADMIN_PASSWORD = 'CutConnect2024Admin!';
+const ADMIN_PASSWORD = 'KenLiNohe.1';
 const BUCKET = 'imagenes-cutconnect';
 
 const headers = {
@@ -91,7 +91,7 @@ async function recalcularCalificacionBarberia(barberiaId) {
 }
 
 function calcularDistancia(lat1, lon1, lat2, lon2) {
-  const R = 6371;
+  const R = 6371;storage
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
