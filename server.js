@@ -659,6 +659,14 @@ app.get('/api/fidelizacion/:barberiaId/:usuarioId', async (req, res) => {
 // ============================================================
 // ANUNCIOS
 // ============================================================
+app.get('/api/anuncios', async (req, res) => {
+  try {
+    const anuncios = await sb('anuncios', { filters: '&activo=eq.true&order=id.desc' });
+    res.json({ success: true, data: anuncios });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.get('/api/anuncios/activo', async (req, res) => {
   try {
     const anuncios = await sb('anuncios', { filters: '&activo=eq.true&order=id.desc&limit=1' });
