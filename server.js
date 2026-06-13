@@ -650,6 +650,46 @@ app.get('/api/fidelizacion/:barberiaId/:usuarioId', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+// ============================================================
+// ANUNCIOS
+// ============================================================
+app.get('/api/anuncios/activo', async (req, res) => {
+  try {
+    const anuncios = await sb('anuncios', { filters: '&activo=eq.true&order=id.desc&limit=1' });
+    res.json({ success: true, data: anuncios[0] || null });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/admin/anuncios', adminAuth, async (req, res) => {
+  try {
+    const anuncios = await sb('anuncios', { filters: '&order=id.desc' });
+    res.json({ success: true, data: anuncios });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/admin/anuncios', adminAuth, async (req, res) => {
+  try {
+    const { titulo, subtitulo, imagen_url, boton_texto, boton_url } = req.body;
+    const anuncio = await sbInsert('anuncios', { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo: true });
+    res.json({ success: true, data: anuncio });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/admin/anuncios/:id', adminAuth, async (req, res) => {
+  try {
+    const { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo } = req.body;
+    await sbUpdate('anuncios', `id=eq.${req.params.id}`, { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo });
+    res.json({ success: true, message: 'Anuncio actualizado' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // ============================================================
 // PAGOS - STRIPE
