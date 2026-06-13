@@ -91,7 +91,7 @@ async function recalcularCalificacionBarberia(barberiaId) {
 }
 
 function calcularDistancia(lat1, lon1, lat2, lon2) {
-  const R = 6371;storage
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
@@ -103,18 +103,6 @@ function calcularDistancia(lat1, lon1, lat2, lon2) {
 // ============================================================
 app.post('/api/upload/logo/:barberiaId', upload.single('imagen'), async (req, res) => {
   try {
-    app.post('/api/upload/anuncio/:id', upload.single('imagen'), async (req, res) => {
-  try {
-    const ext = req.file.originalname.split('.').pop()
-    const fileName = `anuncios/anuncio_${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('imagenes-cutconnect').upload(fileName, req.file.buffer, { contentType: req.file.mimetype, upsert: true })
-    if (error) return res.status(500).json({ success: false, error: error.message })
-    const { data } = supabase.storage.from('imagenes-cutconnect').getPublicUrl(fileName)
-    res.json({ success: true, url: data.publicUrl })
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message })
-  }
-})
     if (!req.file) return res.status(400).json({ success: false, error: 'No se recibió imagen' });
     const ext = req.file.mimetype.split('/')[1];
     const nombre = `logo_${req.params.barberiaId}_${Date.now()}.${ext}`;
@@ -133,6 +121,18 @@ app.post('/api/upload/barbero/:barberoId', upload.single('imagen'), async (req, 
     const nombre = `barbero_${req.params.barberoId}_${Date.now()}.${ext}`;
     const url = await subirImagen(req.file.buffer, req.file.mimetype, 'barberos', nombre);
     await sbUpdate('barberos', `id=eq.${req.params.barberoId}`, { foto: url });
+    res.json({ success: true, url });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/upload/anuncio/:id', upload.single('imagen'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: 'No se recibió imagen' });
+    const ext = req.file.mimetype.split('/')[1];
+    const nombre = `anuncio_${Date.now()}.${ext}`;
+    const url = await subirImagen(req.file.buffer, req.file.mimetype, 'anuncios', nombre);
     res.json({ success: true, url });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -334,19 +334,11 @@ app.get('/api/barberias', async (req, res) => {
 
     let barberias = await sb('barberias', { filters });
 
-    // Filtrar por categoría de servicio
     if (categoria && categoria !== 'todos') {
-      const servicios = await sb('servicios', { 
-        filters: `&categoria=eq.${categoria}`, 
-        select: 'id' 
-      });
+      const servicios = await sb('servicios', { filters: `&categoria=eq.${categoria}`, select: 'id' });
       const servicioIds = servicios.map(s => s.id);
-      
       if (servicioIds.length > 0) {
-        const citas = await sb('citas', { 
-          filters: `&servicio_id=in.(${servicioIds.join(',')})`,
-          select: 'barberia_id'
-        });
+        const citas = await sb('citas', { filters: `&servicio_id=in.(${servicioIds.join(',')})`, select: 'barberia_id' });
         const barberiaIds = [...new Set(citas.map(c => c.barberia_id))];
         if (barberiaIds.length > 0) {
           barberias = barberias.filter(b => barberiaIds.includes(b.id));
@@ -361,6 +353,16 @@ app.get('/api/barberias', async (req, res) => {
     }
 
     res.json({ success: true, data: barberias });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/barberias/:id', async (req, res) => {
+  try {
+    const { nombre, descripcion, telefono, logo, tipo_negocio, fidelizacion_citas, fidelizacion_beneficio } = req.body;
+    await sbUpdate('barberias', `id=eq.${req.params.id}`, { nombre, descripcion, telefono, logo, tipo_negocio, fidelizacion_citas, fidelizacion_beneficio });
+    res.json({ success: true, message: 'Negocio actualizado' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -438,17 +440,14 @@ app.get('/api/barbero/perfil/:usuarioId', async (req, res) => {
 
 app.put('/api/barbero/perfil/:barberoId', async (req, res) => {
   try {
-  const { descripcion, especialidad, whatsapp, horario, apikey_whatsapp } = req.body;
-   await sbUpdate('barberos', `id=eq.${req.params.barberoId}`, {
-  descripcion, especialidad, whatsapp, horario, apikey_whatsapp
-});
+    const { descripcion, especialidad, whatsapp, horario, apikey_whatsapp } = req.body;
+    await sbUpdate('barberos', `id=eq.${req.params.barberoId}`, { descripcion, especialidad, whatsapp, horario, apikey_whatsapp });
     res.json({ success: true, message: 'Perfil actualizado' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Notificación WhatsApp via CallMeBot
 async function enviarWhatsApp(telefono, mensaje) {
   try {
     const numero = telefono.replace(/\D/g, '');
@@ -504,16 +503,16 @@ app.post('/api/citas/agendar', async (req, res) => {
       if (ocupada.length > 0) return res.status(400).json({ success: false, error: 'Esa hora ya está ocupada' });
     }
     const cita = await sbInsert('citas', { usuario_id, barberia_id, barbero_id: barbero_id || null, servicio_id, fecha, hora, estado: 'agendada' });
-   // Notificar al barbero por WhatsApp
     if (barbero_id) {
       try {
         const barberos = await sb('barberos', { filters: `&id=eq.${barbero_id}` });
         if (barberos.length > 0 && barberos[0].whatsapp && barberos[0].apikey_whatsapp) {
-          const msg = `💈 CutConnect: Nueva cita agendada!\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\nServicio: ${servicio_id}`;
+          const msg = `CutConnect: Nueva cita agendada! Fecha: ${fecha} Hora: ${hora}`;
           await enviarWhatsApp(barberos[0].whatsapp, msg);
         }
       } catch (e) { console.log('Error notificando barbero:', e.message); }
-    } res.status(201).json({ success: true, message: 'Cita agendada', cita });
+    }
+    res.status(201).json({ success: true, message: 'Cita agendada', cita });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -639,6 +638,7 @@ app.get('/api/admin/stats', adminAuth, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 // ============================================================
 // FIDELIZACIÓN
 // ============================================================
@@ -650,18 +650,12 @@ app.get('/api/fidelizacion/:barberiaId/:usuarioId', async (req, res) => {
       sb('citas', { filters: `&barberia_id=eq.${barberiaId}&usuario_id=eq.${usuarioId}&estado=neq.cancelada`, select: 'id' })
     ]);
     if (barberia.length === 0) return res.status(404).json({ success: false });
-    res.json({
-      success: true,
-      data: {
-        citas_actuales: citas.length,
-        citas_requeridas: barberia[0].fidelizacion_citas || 10,
-        beneficio: barberia[0].fidelizacion_beneficio || 'Premio especial'
-      }
-    });
+    res.json({ success: true, data: { citas_actuales: citas.length, citas_requeridas: barberia[0].fidelizacion_citas || 10, beneficio: barberia[0].fidelizacion_beneficio || 'Premio especial' } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 // ============================================================
 // ANUNCIOS
 // ============================================================
@@ -702,12 +696,15 @@ app.put('/api/admin/anuncios/:id', adminAuth, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
 // ============================================================
 // PAGOS - STRIPE
 // ============================================================
 const Stripe = require('stripe');
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
 app.post('/api/pagos/stripe/crear', async (req, res) => {
   try {
     const { barberia_id, email } = req.body;
@@ -716,10 +713,7 @@ app.post('/api/pagos/stripe/crear', async (req, res) => {
       line_items: [{
         price_data: {
           currency: 'usd',
-          product_data: {
-           name: 'CutConnect Pro',
-description: 'Dashboard avanzado y estadísticas por 30 días'
-          },
+          product_data: { name: 'CutConnect Pro', description: 'Dashboard avanzado y estadísticas por 30 días' },
           unit_amount: 399
         },
         quantity: 1
@@ -742,13 +736,8 @@ app.post('/api/pagos/stripe/verificar', async (req, res) => {
     if (session.payment_status === 'paid') {
       const fechaVencimiento = new Date();
       fechaVencimiento.setDate(fechaVencimiento.getDate() + 30);
-      await sbUpdate('barberias', `id=eq.${barberia_id}`, {
-        estado_verificacion: 'activo',
-        fecha_vencimiento: fechaVencimiento.toISOString()
-      });
-      await sbUpdate('usuarios', `id=eq.${barberia_id}`, {
-        estado_verificacion: 'activo'
-      });
+      await sbUpdate('barberias', `id=eq.${barberia_id}`, { estado_verificacion: 'activo', fecha_vencimiento: fechaVencimiento.toISOString() });
+      await sbUpdate('usuarios', `id=eq.${barberia_id}`, { estado_verificacion: 'activo' });
       res.json({ success: true, message: 'Pago verificado. Cuenta activada.' });
     } else {
       res.json({ success: false, message: 'Pago pendiente o fallido' });
@@ -759,19 +748,9 @@ app.post('/api/pagos/stripe/verificar', async (req, res) => {
 });
 
 app.get('/api/pagos/binance', (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      pay_id: '176779028',
-      nombre: 'Kennedy Contreras',
-      qr_url: 'https://mypcsegsvarcwyigzodc.supabase.co/storage/v1/object/public/imagenes-cutconnect/QR%20BINANCE.jpeg',
-      monto: 12,
-      moneda: 'USDT',
-      instrucciones: 'Escanea el QR con tu app de Binance o envía exactamente $12 USDT al Pay ID 176779028. Luego envía el comprobante por WhatsApp para activar tu cuenta.'
-    }
-  });
+  res.json({ success: true, data: { pay_id: '176779028', nombre: 'Kennedy Contreras', qr_url: 'https://mypcsegsvarcwyigzodc.supabase.co/storage/v1/object/public/imagenes-cutconnect/QR%20BINANCE.jpeg', monto: 3.99, moneda: 'USDT' } });
 });
+
 app.listen(3001, () => {
-  console.log('\n🚀 CutConnect Backend corriendo en http://localhost:3001');
-  console.log('🗄️  Conectado a Supabase ✅\n');
+  console.log('CutConnect Backend corriendo en http://localhost:3001');
 });
