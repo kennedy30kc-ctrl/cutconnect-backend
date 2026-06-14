@@ -104,7 +104,7 @@ async function enviarWhatsApp(telefono, mensaje) {
     const res = await fetch('https://api.fonnte.com/send', {
       method: 'POST',
       headers: {
-        'Authorization': '2tECzebxq1qqmWtUyddd'
+        'Authorization': 'QXY8QZZ1'
       },
       body: new URLSearchParams({
         target: numero,
