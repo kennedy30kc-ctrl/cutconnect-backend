@@ -98,11 +98,22 @@ function calcularDistancia(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-async function enviarWhatsApp(telefono, apikey, mensaje) {
+async function enviarWhatsApp(telefono, mensaje) {
   try {
     const numero = telefono.replace(/\D/g, '');
-    const url = `https://api.callmebot.com/whatsapp.php?phone=${numero}&text=${encodeURIComponent(mensaje)}&apikey=${apikey}`;
-    await fetch(url);
+    const res = await fetch('https://api.fonnte.com/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': '2tECzebxq1qqmWtUyddd'
+      },
+      body: new URLSearchParams({
+        target: numero,
+        message: mensaje,
+        countryCode: '57'
+      })
+    });
+    const data = await res.json();
+    console.log('WhatsApp enviado:', data);
   } catch (err) {
     console.log('Error WhatsApp:', err.message);
   }
@@ -512,7 +523,7 @@ app.post('/api/citas/agendar', async (req, res) => {
         const barberos = await sb('barberos', { filters: `&id=eq.${barbero_id}` });
         if (barberos.length > 0 && barberos[0].whatsapp && barberos[0].apikey_whatsapp) {
           const msg = `✂️ CutConnect: Nueva cita agendada!\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\nServicio ID: ${servicio_id}`;
-          await enviarWhatsApp(barberos[0].whatsapp, barberos[0].apikey_whatsapp, msg);
+        await enviarWhatsApp(barberos[0].whatsapp, msg);
         }
       } catch (e) { console.log('Error notificando barbero:', e.message); }
     }
@@ -525,7 +536,7 @@ app.post('/api/citas/agendar', async (req, res) => {
           const barberias = await sb('barberias', { filters: `&id=eq.${barberia_id}`, select: 'nombre' });
           const nombreBarberia = barberias.length > 0 ? barberias[0].nombre : 'la barbería';
           const msg = `✅ CutConnect: Tu cita está confirmada!\n💈 ${nombreBarberia}\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\n¡Te esperamos!`;
-          await enviarWhatsApp(usuarios[0].telefono, usuarios[0].apikey_whatsapp, msg);
+          await enviarWhatsApp(usuarios[0].telefono, msg);
         }
       } catch (e) { console.log('Error notificando cliente:', e.message); }
     }
