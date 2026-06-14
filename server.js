@@ -98,6 +98,16 @@ function calcularDistancia(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+async function enviarWhatsApp(telefono, apikey, mensaje) {
+  try {
+    const numero = telefono.replace(/\D/g, '');
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${numero}&text=${encodeURIComponent(mensaje)}&apikey=${apikey}`;
+    await fetch(url);
+  } catch (err) {
+    console.log('Error WhatsApp:', err.message);
+  }
+}
+
 // ============================================================
 // SUBIDA DE IMÁGENES
 // ============================================================
@@ -448,16 +458,6 @@ app.put('/api/barbero/perfil/:barberoId', async (req, res) => {
   }
 });
 
-async function enviarWhatsApp(telefono, mensaje) {
-  try {
-    const numero = telefono.replace(/\D/g, '');
-    const url = `https://api.callmebot.com/whatsapp.php?phone=${numero}&text=${encodeURIComponent(mensaje)}&apikey=xxxxxxxx`;
-    await fetch(url);
-  } catch (err) {
-    console.log('Error WhatsApp:', err.message);
-  }
-}
-
 // ============================================================
 // DISPONIBILIDAD
 // ============================================================
@@ -498,20 +498,38 @@ app.post('/api/citas/agendar', async (req, res) => {
   try {
     const { barberia_id, barbero_id, servicio_id, fecha, hora, usuario_id } = req.body;
     if (!barberia_id || !servicio_id || !fecha || !hora) return res.status(400).json({ success: false, error: 'Todos los campos son requeridos' });
+
     if (barbero_id) {
       const ocupada = await sb('citas', { filters: `&barbero_id=eq.${barbero_id}&fecha=eq.${fecha}&hora=eq.${hora}&estado=neq.cancelada` });
       if (ocupada.length > 0) return res.status(400).json({ success: false, error: 'Esa hora ya está ocupada' });
     }
+
     const cita = await sbInsert('citas', { usuario_id, barberia_id, barbero_id: barbero_id || null, servicio_id, fecha, hora, estado: 'agendada' });
+
+    // Notificación WhatsApp al BARBERO
     if (barbero_id) {
       try {
         const barberos = await sb('barberos', { filters: `&id=eq.${barbero_id}` });
         if (barberos.length > 0 && barberos[0].whatsapp && barberos[0].apikey_whatsapp) {
-          const msg = `CutConnect: Nueva cita agendada! Fecha: ${fecha} Hora: ${hora}`;
-          await enviarWhatsApp(barberos[0].whatsapp, msg);
+          const msg = `✂️ CutConnect: Nueva cita agendada!\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\nServicio ID: ${servicio_id}`;
+          await enviarWhatsApp(barberos[0].whatsapp, barberos[0].apikey_whatsapp, msg);
         }
       } catch (e) { console.log('Error notificando barbero:', e.message); }
     }
+
+    // Notificación WhatsApp al CLIENTE
+    if (usuario_id) {
+      try {
+        const usuarios = await sb('usuarios', { filters: `&id=eq.${usuario_id}`, select: 'nombre,telefono,apikey_whatsapp' });
+        if (usuarios.length > 0 && usuarios[0].telefono && usuarios[0].apikey_whatsapp) {
+          const barberias = await sb('barberias', { filters: `&id=eq.${barberia_id}`, select: 'nombre' });
+          const nombreBarberia = barberias.length > 0 ? barberias[0].nombre : 'la barbería';
+          const msg = `✅ CutConnect: Tu cita está confirmada!\n💈 ${nombreBarberia}\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\n¡Te esperamos!`;
+          await enviarWhatsApp(usuarios[0].telefono, usuarios[0].apikey_whatsapp, msg);
+        }
+      } catch (e) { console.log('Error notificando cliente:', e.message); }
+    }
+
     res.status(201).json({ success: true, message: 'Cita agendada', cita });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -667,10 +685,37 @@ app.get('/api/anuncios', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.get('/api/anuncios/activo', async (req, res) => {
   try {
     const anuncios = await sb('anuncios', { filters: '&activo=eq.true&order=id.desc&limit=1' });
     res.json({ success: true, data: anuncios[0] || null });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Endpoint público para solicitar publicidad (sin auth)
+app.post('/api/anuncios/solicitud', async (req, res) => {
+  try {
+    const { titulo, subtitulo, imagen_url, boton_texto, boton_url, ciudad, pais, latitud, longitud, anunciante_nombre, anunciante_email, anunciante_telefono } = req.body;
+    if (!titulo || !anunciante_nombre || !anunciante_email || !ciudad) {
+      return res.status(400).json({ success: false, error: 'Faltan datos requeridos' });
+    }
+    const anuncio = await sbInsert('anuncios', {
+      titulo, subtitulo: subtitulo || '',
+      imagen_url: imagen_url || '',
+      boton_texto: boton_texto || 'Ver más',
+      boton_url: boton_url || '',
+      ciudad, pais: pais || '',
+      latitud: latitud ? parseFloat(latitud) : null,
+      longitud: longitud ? parseFloat(longitud) : null,
+      anunciante_nombre, anunciante_email,
+      anunciante_telefono: anunciante_telefono || '',
+      activo: false,
+      estado: 'pendiente'
+    });
+    res.status(201).json({ success: true, data: anuncio });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -685,10 +730,19 @@ app.get('/api/admin/anuncios', adminAuth, async (req, res) => {
   }
 });
 
+app.get('/api/admin/solicitudes-publicidad', adminAuth, async (req, res) => {
+  try {
+    const solicitudes = await sb('anuncios', { filters: '&order=id.desc' });
+    res.json({ success: true, data: solicitudes });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/admin/anuncios', adminAuth, async (req, res) => {
   try {
-    const { titulo, subtitulo, imagen_url, boton_texto, boton_url } = req.body;
-    const anuncio = await sbInsert('anuncios', { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo: true });
+    const { titulo, subtitulo, imagen_url, boton_texto, boton_url, ciudad, pais } = req.body;
+    const anuncio = await sbInsert('anuncios', { titulo, subtitulo, imagen_url, boton_texto, boton_url, ciudad: ciudad || null, pais: pais || null, activo: true, estado: 'activo' });
     res.json({ success: true, data: anuncio });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -697,13 +751,14 @@ app.post('/api/admin/anuncios', adminAuth, async (req, res) => {
 
 app.put('/api/admin/anuncios/:id', adminAuth, async (req, res) => {
   try {
-    const { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo } = req.body;
-    await sbUpdate('anuncios', `id=eq.${req.params.id}`, { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo });
+    const { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo, ciudad, pais, estado, fecha_vencimiento, anunciante_nombre, anunciante_email, anunciante_telefono } = req.body;
+    await sbUpdate('anuncios', `id=eq.${req.params.id}`, { titulo, subtitulo, imagen_url, boton_texto, boton_url, activo, ciudad, pais, estado, fecha_vencimiento, anunciante_nombre, anunciante_email, anunciante_telefono });
     res.json({ success: true, message: 'Anuncio actualizado' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 // ============================================================
 // PRECIOS POR BARBERÍA
 // ============================================================
@@ -711,7 +766,7 @@ app.get('/api/precios/:barberiaId', async (req, res) => {
   try {
     const precios = await sb('precios_barberia', {
       filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true`,
-      select: '*,servicio:servicios(nombre,emoji)'
+      select: '*,servicio:servicios(nombre)'
     });
     res.json({ success: true, data: precios });
   } catch (err) {
@@ -736,36 +791,90 @@ app.post('/api/precios/:barberiaId', async (req, res) => {
   }
 });
 
+// ============================================================
+// DASHBOARD PRO - INGRESOS Y ESTADÍSTICAS
+// ============================================================
 app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
   try {
     const hoy = new Date().toISOString().split('T')[0];
-    const inicioSemana = new Date(); inicioSemana.setDate(inicioSemana.getDate() - inicioSemana.getDay());
-    const inicioMes = new Date(); inicioMes.setDate(1);
+    const inicioSemana = new Date(); inicioSemana.setDate(inicioSemana.getDate() - inicioSemana.getDay()); inicioSemana.setHours(0,0,0,0);
+    const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
 
-    const [citas, precios, servicios] = await Promise.all([
-      sb('citas', { filters: `&barberia_id=eq.${req.params.barberiaId}&estado=neq.cancelada`, select: 'servicio_id,fecha,barbero_id' }),
+    const [citas, precios, servicios, barberos] = await Promise.all([
+      sb('citas', { filters: `&barberia_id=eq.${req.params.barberiaId}&estado=neq.cancelada`, select: 'servicio_id,fecha,hora,barbero_id,usuario_id' }),
       sb('precios_barberia', { filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true` }),
-      sb('servicios', { select: 'id,nombre,precio' })
+      sb('servicios', { select: 'id,nombre,precio' }),
+      sb('barberos', { filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true`, select: 'id,nombre' })
     ]);
 
-    const getPrecio = (servicioId: any) => {
-      const custom = precios.find((p: any) => p.servicio_id === servicioId);
+    const getPrecio = (servicioId) => {
+      const custom = precios.find(p => p.servicio_id === servicioId);
       if (custom) return custom.precio;
-      const base = servicios.find((s: any) => s.id === servicioId);
+      const base = servicios.find(s => s.id === servicioId);
       return base?.precio || 0;
     };
 
-    const ingresosHoy = citas.filter((c: any) => c.fecha === hoy).reduce((a: number, c: any) => a + getPrecio(c.servicio_id), 0);
-    const ingresosSemana = citas.filter((c: any) => new Date(c.fecha) >= inicioSemana).reduce((a: number, c: any) => a + getPrecio(c.servicio_id), 0);
-    const ingresosMes = citas.filter((c: any) => new Date(c.fecha) >= inicioMes).reduce((a: number, c: any) => a + getPrecio(c.servicio_id), 0);
+    const citasHoy = citas.filter(c => c.fecha === hoy);
+    const citasSemana = citas.filter(c => new Date(c.fecha + 'T12:00:00') >= inicioSemana);
+    const citasMes = citas.filter(c => new Date(c.fecha + 'T12:00:00') >= inicioMes);
 
-    const serviciosCount: any = {};
-    citas.forEach((c: any) => { serviciosCount[c.servicio_id] = (serviciosCount[c.servicio_id] || 0) + 1; });
-    const servicioMasVendidoId = Object.keys(serviciosCount).sort((a, b) => serviciosCount[b] - serviciosCount[a])[0];
-    const servicioMasVendido = servicios.find((s: any) => s.id == servicioMasVendidoId);
+    const ingresosHoy = citasHoy.reduce((a, c) => a + getPrecio(c.servicio_id), 0);
+    const ingresosSemana = citasSemana.reduce((a, c) => a + getPrecio(c.servicio_id), 0);
+    const ingresosMes = citasMes.reduce((a, c) => a + getPrecio(c.servicio_id), 0);
+    const ingresosPromedio = citasMes.length > 0 ? ingresosMes / citasMes.length : 0;
 
-    const barberosCount: any = {};
-    citas.forEach((c: any) => { if(c.barbero_id) barberosCount[c.barbero_id] = (barberosCount[c.barbero_id] || 0) + 1; });
+    // Proyección del mes
+    const diasTranscurridos = new Date().getDate();
+    const diasDelMes = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const proyeccionMes = diasTranscurridos > 0 ? (ingresosMes / diasTranscurridos) * diasDelMes : 0;
+
+    // Servicio más vendido
+    const serviciosCount = {};
+    const serviciosIngresos = {};
+    citas.forEach(c => {
+      serviciosCount[c.servicio_id] = (serviciosCount[c.servicio_id] || 0) + 1;
+      serviciosIngresos[c.servicio_id] = (serviciosIngresos[c.servicio_id] || 0) + getPrecio(c.servicio_id);
+    });
+    const servicioTopId = Object.keys(serviciosCount).sort((a, b) => serviciosCount[b] - serviciosCount[a])[0];
+    const servicioMasVendido = servicios.find(s => s.id == servicioTopId);
+    const servicioRentableId = Object.keys(serviciosIngresos).sort((a, b) => serviciosIngresos[b] - serviciosIngresos[a])[0];
+    const servicioMasRentable = servicios.find(s => s.id == servicioRentableId);
+
+    // Clientes nuevos y recurrentes este mes
+    const clientesMes = citasMes.map(c => c.usuario_id).filter(Boolean);
+    const clientesUnicos = [...new Set(clientesMes)];
+    let clientesNuevos = 0;
+    let clientesRecurrentes = 0;
+    for (const usuarioId of clientesUnicos) {
+      const todasCitas = citas.filter(c => c.usuario_id === usuarioId);
+      if (todasCitas.length === 1) clientesNuevos++;
+      else if (todasCitas.length >= 2) clientesRecurrentes++;
+    }
+
+    // Hora pico
+    const horasCount = {};
+    citas.forEach(c => { if(c.hora) { const h = c.hora.split(':')[0] + ':00'; horasCount[h] = (horasCount[h] || 0) + 1; } });
+    const horaPico = Object.keys(horasCount).sort((a, b) => horasCount[b] - horasCount[a])[0];
+
+    // Alertas: barberos sin citas en 7 días
+    const hace7dias = new Date(); hace7dias.setDate(hace7dias.getDate() - 7);
+    let barberosSinCitas = 0;
+    barberos.forEach(b => {
+      const citasBarbero = citas.filter(c => c.barbero_id === b.id && new Date(c.fecha + 'T12:00:00') >= hace7dias);
+      if (citasBarbero.length === 0) barberosSinCitas++;
+    });
+
+    // Días sin citas esta semana
+    const diasSemana = ['lunes','martes','miercoles','jueves','viernes','sabado','domingo'];
+    let diasSinCitas = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(inicioSemana); d.setDate(d.getDate() + i);
+      const dStr = d.toISOString().split('T')[0];
+      if (new Date(dStr) <= new Date(hoy)) {
+        const citasDia = citas.filter(c => c.fecha === dStr);
+        if (citasDia.length === 0) diasSinCitas++;
+      }
+    }
 
     res.json({
       success: true,
@@ -773,15 +882,26 @@ app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
         ingresos_hoy: ingresosHoy,
         ingresos_semana: ingresosSemana,
         ingresos_mes: ingresosMes,
-        citas_mes: citas.filter((c: any) => new Date(c.fecha) >= inicioMes).length,
+        ingreso_promedio: ingresosPromedio,
+        proyeccion_mes: proyeccionMes,
+        citas_mes: citasMes.length,
         servicio_mas_vendido: servicioMasVendido?.nombre || '—',
-        servicio_mas_vendido_count: servicioMasVendidoId ? serviciosCount[servicioMasVendidoId] : 0,
+        servicio_mas_vendido_count: servicioTopId ? serviciosCount[servicioTopId] : 0,
+        servicio_mas_rentable: servicioMasRentable?.nombre || '—',
+        ingreso_servicio_top: servicioRentableId ? serviciosIngresos[servicioRentableId] : 0,
+        clientes_nuevos: clientesNuevos,
+        clientes_recurrentes: clientesRecurrentes,
+        hora_pico: horaPico || null,
+        citas_hora_pico: horaPico ? horasCount[horaPico] : 0,
+        alertas_barberos_sin_citas: barberosSinCitas,
+        dias_sin_citas: diasSinCitas
       }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // ============================================================
