@@ -698,7 +698,40 @@ app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
     res.json({ success: true, data: { ingresos_hoy: ingresosHoy, ingresos_semana: ingresosSemana, ingresos_mes: ingresosMes, ingreso_promedio: ingresosPromedio, proyeccion_mes: proyeccionMes, citas_mes: citasMes.length, servicio_mas_vendido: servicioMasVendido?.nombre || '—', servicio_mas_vendido_count: servicioTopId ? serviciosCount[servicioTopId] : 0, servicio_mas_rentable: servicioMasRentable?.nombre || '—', ingreso_servicio_top: servicioRentableId ? serviciosIngresos[servicioRentableId] : 0, clientes_nuevos: clientesNuevos, clientes_recurrentes: clientesRecurrentes, hora_pico: horaPico || null, citas_hora_pico: horaPico ? horasCount[horaPico] : 0, alertas_barberos_sin_citas: barberosSinCitas, dias_sin_citas: diasSinCitas } });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
-
+// ============================================================
+// STATS POR DÍA (para gráficas Pro)
+// ============================================================
+app.get('/api/stats/graficas/:barberiaId', async (req, res) => {
+  try {
+    const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
+    const [citas, precios, servicios] = await Promise.all([
+      sb('citas', { filters: `&barberia_id=eq.${req.params.barberiaId}&estado=neq.cancelada`, select: 'servicio_id,fecha,estado' }),
+      sb('precios_barberia', { filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true` }),
+      sb('servicios', { select: 'id,nombre,precio' })
+    ]);
+    const getPrecio = (servicioId) => {
+      const custom = precios.find(p => p.servicio_id === servicioId);
+      if (custom) return custom.precio;
+      return servicios.find(s => s.id === servicioId)?.precio || 0;
+    };
+    const dias = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+    const ingresosPorDia = Array(7).fill(0);
+    const citasPorDia = Array(7).fill(0);
+    const citasMes = citas.filter(c => new Date(c.fecha + 'T12:00:00') >= inicioMes);
+    citasMes.forEach(c => {
+      const dia = new Date(c.fecha + 'T12:00:00').getDay();
+      ingresosPorDia[dia] += getPrecio(c.servicio_id);
+      citasPorDia[dia]++;
+    });
+    const semanas = [0,0,0,0];
+    citasMes.forEach(c => {
+      const fecha = new Date(c.fecha + 'T12:00:00');
+      const semana = Math.min(Math.floor((fecha.getDate()-1)/7), 3);
+      semanas[semana]++;
+    });
+    res.json({ success: true, data: { por_dia: dias.map((d,i) => ({ dia: d, ingresos: ingresosPorDia[i], citas: citasPorDia[i] })), por_semana: semanas.map((c,i) => ({ semana: `Sem ${i+1}`, citas: c })) } });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // ============================================================
