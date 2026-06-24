@@ -216,9 +216,17 @@ app.post('/api/auth/login', async (req, res) => {
     if (usuario.rol === 'dueño') {
       const barberias = await sb('barberias', { filters: `&dueno_id=eq.${usuario.id}` });
       if (barberias.length > 0) {
-        usuario.negocio_nombre = barberias[0].nombre; usuario.ciudad = barberias[0].ciudad; usuario.estado = barberias[0].estado;
-        usuario.negocio_telefono = barberias[0].telefono; usuario.negocio_logo = barberias[0].logo; usuario.tipo_negocio = barberias[0].tipo_negocio;
-        usuario.fecha_trial_inicio = barberias[0].fecha_trial_inicio; usuario.estado_verificacion = barberias[0].estado_verificacion; usuario.barberia_id = barberias[0].id;
+        const barberia = barberias[0];
+        if (barberia.estado_verificacion === 'trial' && barberia.fecha_trial_inicio) {
+          const diasTranscurridos = (Date.now() - new Date(barberia.fecha_trial_inicio).getTime()) / (1000*60*60*24);
+          if (diasTranscurridos >= 14) {
+            await sbUpdate('barberias', `id=eq.${barberia.id}`, { estado_verificacion: 'suspendido' });
+            barberia.estado_verificacion = 'suspendido';
+          }
+        }
+        usuario.negocio_nombre = barberia.nombre; usuario.ciudad = barberia.ciudad; usuario.estado = barberia.estado;
+        usuario.negocio_telefono = barberia.telefono; usuario.negocio_logo = barberia.logo; usuario.tipo_negocio = barberia.tipo_negocio;
+        usuario.fecha_trial_inicio = barberia.fecha_trial_inicio; usuario.estado_verificacion = barberia.estado_verificacion; usuario.barberia_id = barberia.id;
       }
     }
     if (usuario.rol === 'barbero') {
