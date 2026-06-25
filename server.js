@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const bcrypt = require('bcryptjs');
 const app = express();
 
 app.use(cors());
@@ -18,6 +19,28 @@ const headers = {
   'apikey': SUPABASE_KEY,
   'Authorization': `Bearer ${SUPABASE_KEY}`
 };
+
+// Control de intentos de login (máximo 5 por email)
+const loginIntentos = {};
+function verificarIntentos(email) {
+  const ahora = Date.now();
+  if (!loginIntentos[email]) loginIntentos[email] = { count: 0, bloqueadoHasta: 0 };
+  const intentos = loginIntentos[email];
+  if (intentos.bloqueadoHasta > ahora) {
+    const minutosRestantes = Math.ceil((intentos.bloqueadoHasta - ahora) / 60000);
+    return { bloqueado: true, minutosRestantes };
+  }
+  return { bloqueado: false };
+}
+function registrarIntento(email, exitoso) {
+  if (!loginIntentos[email]) loginIntentos[email] = { count: 0, bloqueadoHasta: 0 };
+  if (exitoso) { loginIntentos[email] = { count: 0, bloqueadoHasta: 0 }; return; }
+  loginIntentos[email].count++;
+  if (loginIntentos[email].count >= 5) {
+    loginIntentos[email].bloqueadoHasta = Date.now() + 15 * 60 * 1000; // 15 minutos
+    loginIntentos[email].count = 0;
+  }
+}
 
 function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -183,6 +206,7 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, nombre, telefono, rol, pais, negocio_nombre, ciudad, estado, municipio, tipo_negocio, negocio_telefono, negocio_logo, negocio_descripcion, direccion, latitud, longitud, codigo_invitacion } = req.body;
     if (!email || !password || !rol) return res.status(400).json({ success: false, error: 'Email, contraseña y rol requeridos' });
+    if (password.length < 6) return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 6 caracteres' });
     const existing = await sb('usuarios', { filters: `&email=eq.${encodeURIComponent(email)}` });
     if (existing.length > 0) return res.status(400).json({ success: false, error: 'El email ya está registrado' });
     if (rol === 'dueño' && (!negocio_nombre || !ciudad || !negocio_telefono || !direccion || !latitud || !longitud)) return res.status(400).json({ success: false, error: 'Completa todos los datos del negocio' });
@@ -193,7 +217,9 @@ app.post('/api/auth/register', async (req, res) => {
       if (barberos[0].usuario_id) return res.status(400).json({ success: false, error: 'Este código ya fue usado' });
       barberoVinculado = barberos[0];
     }
-    const usuario = await sbInsert('usuarios', { email, password, nombre: nombre || email.split('@')[0], telefono: telefono || '', rol, pais: pais || 'Colombia', estado_verificacion: rol === 'dueño' ? 'pendiente' : 'aprobado' });
+    // Encriptar contraseña
+    const passwordHash = await bcrypt.hash(password, 10);
+    const usuario = await sbInsert('usuarios', { email, password: passwordHash, nombre: nombre || email.split('@')[0], telefono: telefono || '', rol, pais: pais || 'Colombia', estado_verificacion: rol === 'dueño' ? 'pendiente' : 'aprobado' });
     if (rol === 'dueño') {
       await sbInsert('barberias', { dueno_id: usuario.id, nombre: negocio_nombre, tipo_negocio: tipo_negocio || 'barberia', ciudad, pais: pais || 'Colombia', estado: estado || '', municipio: municipio || '', telefono: negocio_telefono, logo: negocio_logo || null, descripcion: negocio_descripcion || '', direccion, latitud: parseFloat(latitud), longitud: parseFloat(longitud), estado_verificacion: 'pendiente' });
     }
@@ -210,9 +236,32 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, error: 'Email y contraseña requeridos' });
-    const usuarios = await sb('usuarios', { filters: `&email=eq.${encodeURIComponent(email)}&password=eq.${encodeURIComponent(password)}` });
-    if (usuarios.length === 0) return res.status(401).json({ success: false, error: 'Email o contraseña incorrectos' });
+
+    // Verificar bloqueo por intentos
+    const intentos = verificarIntentos(email);
+    if (intentos.bloqueado) return res.status(429).json({ success: false, error: `Demasiados intentos fallidos. Intenta de nuevo en ${intentos.minutosRestantes} minutos.` });
+
+    const usuarios = await sb('usuarios', { filters: `&email=eq.${encodeURIComponent(email)}`, select: '*' });
+    if (usuarios.length === 0) { registrarIntento(email, false); return res.status(401).json({ success: false, error: 'Email o contraseña incorrectos' }); }
+
     const usuario = usuarios[0];
+
+    // Verificar contraseña (soporta tanto hash como texto plano para usuarios existentes)
+    let passwordValida = false;
+    if (usuario.password && usuario.password.startsWith('$2')) {
+      passwordValida = await bcrypt.compare(password, usuario.password);
+    } else {
+      passwordValida = usuario.password === password;
+      // Migrar a hash si coincide
+      if (passwordValida) {
+        const nuevoHash = await bcrypt.hash(password, 10);
+        await sbUpdate('usuarios', `id=eq.${usuario.id}`, { password: nuevoHash });
+      }
+    }
+
+    if (!passwordValida) { registrarIntento(email, false); return res.status(401).json({ success: false, error: 'Email o contraseña incorrectos' }); }
+    registrarIntento(email, true);
+
     if (usuario.rol === 'dueño') {
       const barberias = await sb('barberias', { filters: `&dueno_id=eq.${usuario.id}` });
       if (barberias.length > 0) {
@@ -240,9 +289,12 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/recuperar-contrasena', async (req, res) => {
   try {
     const { email, nueva_contrasena } = req.body;
+    if (!email || !nueva_contrasena) return res.status(400).json({ success: false, error: 'Email y nueva contraseña requeridos' });
+    if (nueva_contrasena.length < 6) return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 6 caracteres' });
     const usuarios = await sb('usuarios', { filters: `&email=eq.${encodeURIComponent(email)}` });
     if (usuarios.length === 0) return res.status(404).json({ success: false, error: 'Email no registrado' });
-    await sbUpdate('usuarios', `id=eq.${usuarios[0].id}`, { password: nueva_contrasena });
+    const passwordHash = await bcrypt.hash(nueva_contrasena, 10);
+    await sbUpdate('usuarios', `id=eq.${usuarios[0].id}`, { password: passwordHash });
     res.json({ success: true, message: 'Contraseña actualizada' });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
@@ -391,7 +443,6 @@ app.post('/api/citas/agendar', async (req, res) => {
     }
     const cita = await sbInsert('citas', { usuario_id, barberia_id, barbero_id: barbero_id || null, servicio_id, fecha, hora, estado: 'agendada' });
 
-    // Notificación WhatsApp al BARBERO
     if (barbero_id) {
       try {
         const barberos = await sb('barberos', { filters: `&id=eq.${barbero_id}` });
@@ -402,7 +453,6 @@ app.post('/api/citas/agendar', async (req, res) => {
       } catch (e) { console.log('Error notificando barbero:', e.message); }
     }
 
-    // Notificación WhatsApp al CLIENTE
     if (usuario_id) {
       try {
         const usuarios = await sb('usuarios', { filters: `&id=eq.${usuario_id}`, select: 'nombre,telefono' });
@@ -419,7 +469,6 @@ app.post('/api/citas/agendar', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// Completar cita
 app.post('/api/citas/completar/:id', async (req, res) => {
   try {
     await sbUpdate('citas', `id=eq.${req.params.id}`, { estado: 'completada' });
@@ -427,7 +476,6 @@ app.post('/api/citas/completar/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// Cancelar cita
 app.post('/api/citas/cancelar/:id', async (req, res) => {
   try {
     await sbUpdate('citas', `id=eq.${req.params.id}`, { estado: 'cancelada' });
@@ -437,7 +485,6 @@ app.post('/api/citas/cancelar/:id', async (req, res) => {
 
 app.get('/api/citas/usuario/:usuarioId', async (req, res) => {
   try {
-    // Cliente solo ve citas agendadas (pendientes)
     const citas = await sb('citas', { filters: `&usuario_id=eq.${req.params.usuarioId}&estado=eq.agendada`, select: '*,barberia:barberias(*),barbero:barberos(*),servicio:servicios(*)' });
     res.json({ success: true, data: citas });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
@@ -636,34 +683,28 @@ app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
     const hoy = new Date().toISOString().split('T')[0];
     const inicioSemana = new Date(); inicioSemana.setDate(inicioSemana.getDate() - inicioSemana.getDay()); inicioSemana.setHours(0,0,0,0);
     const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
-
     const [citas, precios, servicios, barberos] = await Promise.all([
       sb('citas', { filters: `&barberia_id=eq.${req.params.barberiaId}&estado=neq.cancelada`, select: 'servicio_id,fecha,hora,barbero_id,usuario_id' }),
       sb('precios_barberia', { filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true` }),
       sb('servicios', { select: 'id,nombre,precio' }),
       sb('barberos', { filters: `&barberia_id=eq.${req.params.barberiaId}&activo=eq.true`, select: 'id,nombre' })
     ]);
-
     const getPrecio = (servicioId) => {
       const custom = precios.find(p => p.servicio_id === servicioId);
       if (custom) return custom.precio;
       const base = servicios.find(s => s.id === servicioId);
       return base?.precio || 0;
     };
-
     const citasHoy = citas.filter(c => c.fecha === hoy);
     const citasSemana = citas.filter(c => new Date(c.fecha + 'T12:00:00') >= inicioSemana);
     const citasMes = citas.filter(c => new Date(c.fecha + 'T12:00:00') >= inicioMes);
-
     const ingresosHoy = citasHoy.reduce((a, c) => a + getPrecio(c.servicio_id), 0);
     const ingresosSemana = citasSemana.reduce((a, c) => a + getPrecio(c.servicio_id), 0);
     const ingresosMes = citasMes.reduce((a, c) => a + getPrecio(c.servicio_id), 0);
     const ingresosPromedio = citasMes.length > 0 ? ingresosMes / citasMes.length : 0;
-
     const diasTranscurridos = new Date().getDate();
     const diasDelMes = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
     const proyeccionMes = diasTranscurridos > 0 ? (ingresosMes / diasTranscurridos) * diasDelMes : 0;
-
     const serviciosCount = {}; const serviciosIngresos = {};
     citas.forEach(c => {
       serviciosCount[c.servicio_id] = (serviciosCount[c.servicio_id] || 0) + 1;
@@ -673,7 +714,6 @@ app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
     const servicioMasVendido = servicios.find(s => s.id == servicioTopId);
     const servicioRentableId = Object.keys(serviciosIngresos).sort((a, b) => serviciosIngresos[b] - serviciosIngresos[a])[0];
     const servicioMasRentable = servicios.find(s => s.id == servicioRentableId);
-
     const clientesMes = citasMes.map(c => c.usuario_id).filter(Boolean);
     const clientesUnicos = [...new Set(clientesMes)];
     let clientesNuevos = 0; let clientesRecurrentes = 0;
@@ -682,18 +722,15 @@ app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
       if (todasCitas.length === 1) clientesNuevos++;
       else if (todasCitas.length >= 2) clientesRecurrentes++;
     }
-
     const horasCount = {};
     citas.forEach(c => { if(c.hora) { const h = c.hora.split(':')[0] + ':00'; horasCount[h] = (horasCount[h] || 0) + 1; } });
     const horaPico = Object.keys(horasCount).sort((a, b) => horasCount[b] - horasCount[a])[0];
-
     const hace7dias = new Date(); hace7dias.setDate(hace7dias.getDate() - 7);
     let barberosSinCitas = 0;
     barberos.forEach(b => {
       const citasBarbero = citas.filter(c => c.barbero_id === b.id && new Date(c.fecha + 'T12:00:00') >= hace7dias);
       if (citasBarbero.length === 0) barberosSinCitas++;
     });
-
     let diasSinCitas = 0;
     for (let i = 0; i < 7; i++) {
       const d = new Date(inicioSemana); d.setDate(d.getDate() + i);
@@ -702,10 +739,10 @@ app.get('/api/stats/ingresos/:barberiaId', async (req, res) => {
         if (citas.filter(c => c.fecha === dStr).length === 0) diasSinCitas++;
       }
     }
-
     res.json({ success: true, data: { ingresos_hoy: ingresosHoy, ingresos_semana: ingresosSemana, ingresos_mes: ingresosMes, ingreso_promedio: ingresosPromedio, proyeccion_mes: proyeccionMes, citas_mes: citasMes.length, servicio_mas_vendido: servicioMasVendido?.nombre || '—', servicio_mas_vendido_count: servicioTopId ? serviciosCount[servicioTopId] : 0, servicio_mas_rentable: servicioMasRentable?.nombre || '—', ingreso_servicio_top: servicioRentableId ? serviciosIngresos[servicioRentableId] : 0, clientes_nuevos: clientesNuevos, clientes_recurrentes: clientesRecurrentes, hora_pico: horaPico || null, citas_hora_pico: horaPico ? horasCount[horaPico] : 0, alertas_barberos_sin_citas: barberosSinCitas, dias_sin_citas: diasSinCitas } });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
+
 // ============================================================
 // STATS POR DÍA (para gráficas Pro)
 // ============================================================
@@ -740,6 +777,7 @@ app.get('/api/stats/graficas/:barberiaId', async (req, res) => {
     res.json({ success: true, data: { por_dia: dias.map((d,i) => ({ dia: d, ingresos: ingresosPorDia[i], citas: citasPorDia[i] })), por_semana: semanas.map((c,i) => ({ semana: `Sem ${i+1}`, citas: c })) } });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // ============================================================
@@ -777,7 +815,7 @@ app.post('/api/pagos/stripe/verificar', async (req, res) => {
 });
 
 app.get('/api/pagos/binance', (req, res) => {
-  res.json({ success: true, data: { pay_id: '176779028', nombre: 'Kennedy Contreras', qr_url: 'https://mypcsegsvarcwyigzodc.supabase.co/storage/v1/object/public/imagenes-cutconnect/QR%20BINANCE.jpeg', monto: 3.99, moneda: 'USDT' } });
+  res.json({ success: true, data: { pay_id: '176779028', nombre: 'CutConnect', qr_url: 'https://mypcsegsvarcwyigzodc.supabase.co/storage/v1/object/public/imagenes-cutconnect/QR%20BINANCE.jpeg', monto: 3.99, moneda: 'USDT' } });
 });
 
 app.listen(3001, () => { console.log('CutConnect Backend corriendo en http://localhost:3001'); });
