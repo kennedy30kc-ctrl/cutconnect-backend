@@ -791,10 +791,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // ============================================================
 // PAGOS - STRIPE
 // ============================================================
-const Stripe = require('stripe');
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-app.post('/api/pagos/stripe/crear', async (req, res) => {
   try {
     const { barberia_id, email } = req.body;
     const session = await stripe.checkout.sessions.create({
