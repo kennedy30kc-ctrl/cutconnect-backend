@@ -542,7 +542,15 @@ app.get('/api/admin/negocios', adminAuth, async (req, res) => {
     res.json({ success: true, data: result });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
-
+app.get('/api/admin/usuarios', adminAuth, async (req, res) => {
+  try {
+    const todos = await sb('usuarios', { select: 'id,nombre,email,telefono,pais,rol,created_at' });
+    const clientes = todos.filter(u => u.rol === 'cliente');
+    res.json({ success: true, data: clientes });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.post('/api/admin/aprobar/:id', adminAuth, async (req, res) => {
   try {
     await sbUpdate('barberias', `id=eq.${req.params.id}`, { estado_verificacion: 'trial', fecha_trial_inicio: new Date().toISOString() });
