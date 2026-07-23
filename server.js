@@ -785,7 +785,13 @@ app.get('/api/stats/graficas/:barberiaId', async (req, res) => {
     res.json({ success: true, data: { por_dia: dias.map((d,i) => ({ dia: d, ingresos: ingresosPorDia[i], citas: citasPorDia[i] })), por_semana: semanas.map((c,i) => ({ semana: `Sem ${i+1}`, citas: c })) } });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
-
+app.post('/api/admin/pro/:id', adminAuth, async (req, res) => {
+  try {
+    const { activo } = req.body;
+    await sbUpdate('usuarios', `id=eq.${req.params.id}`, { is_pro: activo === true });
+    res.json({ success: true, message: activo ? 'Plan Pro activado' : 'Plan Pro desactivado' });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.get('/api/pagos/binance', (req, res) => {
