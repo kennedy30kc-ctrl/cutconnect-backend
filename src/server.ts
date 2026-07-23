@@ -11,7 +11,13 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
-
+app.post('/api/admin/pro/:id', adminAuth, async (req, res) => {
+  try {
+    const { activo } = req.body;
+    await sbUpdate('usuarios', `id=eq.${req.params.id}`, { is_pro: activo === true });
+    res.json({ success: true, message: activo ? 'Plan Pro activado' : 'Plan Pro desactivado' });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
