@@ -485,21 +485,21 @@ app.post('/api/citas/cancelar/:id', async (req, res) => {
 
 app.get('/api/citas/usuario/:usuarioId', async (req, res) => {
   try {
-    const citas = await sb('citas', { filters: `&usuario_id=eq.${req.params.usuarioId}&estado=eq.agendada`, select: '*,barberia:barberias(*),barbero:barberos(*),servicio:servicios(*)' });
+    const citas = await sb('citas', { filters: `&usuario_id=eq.${req.params.usuarioId}&estado=in.(agendada,completada)`, select: '*,barberia:barberias(*),barbero:barberos(*),servicio:servicios(*)' });
     res.json({ success: true, data: citas });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
 app.get('/api/citas/barberia/:barberiaId', async (req, res) => {
   try {
-    const citas = await sb('citas', { filters: `&barberia_id=eq.${req.params.barberiaId}&estado=eq.agendada`, select: '*,barbero:barberos(*),servicio:servicios(*),cliente:usuarios(nombre,email,telefono)' });
+    const citas = await sb('citas', { filters: `&barberia_id=in.${req.params.barberiaId}&estado=eq.(agendada,completada)`, select: '*,barbero:barberos(*),servicio:servicios(*),cliente:usuarios(nombre,email,telefono)' });
     res.json({ success: true, data: citas });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
 app.get('/api/citas/barbero/:barberoId', async (req, res) => {
   try {
-    const citas = await sb('citas', { filters: `&barbero_id=eq.${req.params.barberoId}&estado=eq.agendada`, select: '*,servicio:servicios(*),cliente:usuarios(nombre,email,telefono)' });
+    const citas = await sb('citas', { filters: `&barberia_id=eq.${req.params.barberiaId}&estado=in.(agendada,completada)`, select: '*,servicio:servicios(*),cliente:usuarios(nombre,email,telefono)' });
     res.json({ success: true, data: citas });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
